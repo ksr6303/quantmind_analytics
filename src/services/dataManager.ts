@@ -65,9 +65,12 @@ export const bootstrapFromSeed = async (onProgress: (status: string) => void): P
             const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
             const url = `${cleanBase}/data/seed_${fileIndex}.json`;
             
+            console.log(`[Bootstrap] Attempting to fetch: ${url}`);
+            
             const response = await fetch(url);
             
             if (!response.ok) {
+                console.warn(`[Bootstrap] Failed to fetch ${url}: ${response.status} ${response.statusText}`);
                 hasMore = false;
                 break;
             }
@@ -81,6 +84,8 @@ export const bootstrapFromSeed = async (onProgress: (status: string) => void): P
             }
 
             onProgress(`Importing part ${fileIndex} (${symbols.length} stocks)...`);
+            console.log(`[Bootstrap] Importing ${symbols.length} stocks from part ${fileIndex}`);
+            
             for (const symbol of symbols) {
                 await saveStockData(symbol, data[symbol]);
             }

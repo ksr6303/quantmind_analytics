@@ -16,7 +16,8 @@ export const initGemini = () => {
   
   // Re-initialize if the key has changed
   if (!genAI || (genAI as any).apiKey !== activeKey) {
-    genAI = new GoogleGenAI(activeKey);
+    console.log(`[AI] Initializing Gemini with key from ${getStoredApiKey() ? 'Settings' : 'Environment'}`);
+    genAI = new GoogleGenAI({ apiKey: activeKey });
   }
   return genAI;
 };
