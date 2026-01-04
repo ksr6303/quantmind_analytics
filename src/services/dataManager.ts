@@ -52,6 +52,27 @@ export const getAllStocksData = async (): Promise<any[]> => {
   });
 };
 
+export const bootstrapFromSeed = async (onProgress: (status: string) => void): Promise<boolean> => {
+    try {
+        onProgress('Downloading seed data from GitHub...');
+        // Try to fetch from the public folder (which will be /quantmind_analytics/data/seed.json on GH Pages)
+        const response = await fetch('./data/seed.json');
+        if (!response.ok) throw new Error('Seed file not found');
+        
+        const data = await response.json();
+        const symbols = Object.keys(data);
+        
+        onProgress(`Importing ${symbols.length} stocks...`);
+        for (const symbol of symbols) {
+            await saveStockData(symbol, data[symbol]);
+        }
+        return true;
+    } catch (e) {
+        console.warn("Bootstrap failed (this is normal if you haven't pushed data yet):", e);
+        return false;
+    }
+};
+
 // Helper to fetch and update a single stock with signal awareness
 const fetchAndUpdateStock = async (
   stock: { symbol: string }, 
@@ -111,7 +132,16 @@ export const updateAllStocks = async (
   let processedCount = 0;
 
   onProgress(0, total, 'System', 'Checking Local Database...');
-  const allData = await getAllStocksData();
+  let allData = await getAllStocksData();
+  
+  // If DB is totally empty, try to bootstrap from GitHub seed.json
+  if (allData.length === 0) {
+      const success = await bootstrapFromSeed((msg) => onProgress(0, total, 'Bootstrap', msg));
+      if (success) {
+          allData = await getAllStocksData(); // Reload data after bootstrap
+      }
+  }
+
   const dataMap = new Map<string, HistoricalPoint[]>();
   allData.forEach(d => dataMap.set(d.symbol, d.history));
 
