@@ -5,6 +5,7 @@ export interface ModelSettings {
 }
 
 const SETTINGS_KEY = 'quantmind_model_settings';
+const API_KEY_KEY = 'quantmind_gemini_api_key';
 
 export const getStoredThresholds = (): ModelSettings => {
   try {
@@ -18,6 +19,14 @@ export const getStoredThresholds = (): ModelSettings => {
 
 export const saveThresholds = (settings: ModelSettings) => {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+};
+
+export const getStoredApiKey = (): string => {
+  return localStorage.getItem(API_KEY_KEY) || '';
+};
+
+export const saveApiKey = (key: string) => {
+  localStorage.setItem(API_KEY_KEY, key);
 };
 
 export const getModelThreshold = (modelId: string): number => {

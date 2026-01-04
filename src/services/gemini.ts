@@ -1,16 +1,22 @@
 import { GoogleGenAI } from "@google/genai";
+import { getStoredApiKey } from './settingsManager';
 
-const apiKey = process.env.GEMINI_API_KEY;
+const envApiKey = process.env.GEMINI_API_KEY;
 
 let genAI: GoogleGenAI | null = null;
 
 export const initGemini = () => {
-  if (!apiKey) {
-    console.warn("GEMINI_API_KEY is not set. AI features will be disabled or mocked.");
+  // Priority: 1. User Settings (localStorage), 2. Environment Variable
+  const activeKey = getStoredApiKey() || envApiKey;
+
+  if (!activeKey) {
+    console.warn("Gemini API Key not found in Settings or Environment. AI features disabled.");
     return null;
   }
-  if (!genAI) {
-    genAI = new GoogleGenAI({ apiKey });
+  
+  // Re-initialize if the key has changed
+  if (!genAI || (genAI as any).apiKey !== activeKey) {
+    genAI = new GoogleGenAI(activeKey);
   }
   return genAI;
 };

@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "homepage": "https://ksr6303.github.io/Quantmind_analytics",
+  "homepage": "https://ksr6303.github.io/quantmind_analytics",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

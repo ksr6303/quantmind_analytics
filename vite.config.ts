@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
         "@": path.resolve(__dirname, "./src"),
       },
     },
-    base: '/Quantmind_analytics/',
+    base: '/quantmind_analytics/',
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
     }
