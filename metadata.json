@@ -1,0 +1,5 @@
+{
+  "name": "QuantMind Analytics",
+  "description": "A professional quantitative stock analysis dashboard using mathematical models and real-time market data to generate trading recommendations.",
+  "requestFramePermissions": []
+}
