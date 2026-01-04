@@ -57,10 +57,15 @@ export const bootstrapFromSeed = async (onProgress: (status: string) => void): P
         let fileIndex = 1;
         let totalImported = 0;
         let hasMore = true;
+        const baseUrl = import.meta.env.BASE_URL; // e.g., "/quantmind_analytics/" or "/"
 
         while (hasMore) {
             onProgress(`Downloading part ${fileIndex}...`);
-            const response = await fetch(`./data/seed_${fileIndex}.json`);
+            // Remove trailing slash from base if present to avoid double slash
+            const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+            const url = `${cleanBase}/data/seed_${fileIndex}.json`;
+            
+            const response = await fetch(url);
             
             if (!response.ok) {
                 hasMore = false;
