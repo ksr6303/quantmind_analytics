@@ -54,21 +54,39 @@ export const getAllStocksData = async (): Promise<any[]> => {
 
 export const bootstrapFromSeed = async (onProgress: (status: string) => void): Promise<boolean> => {
     try {
-        onProgress('Downloading seed data from GitHub...');
-        // Try to fetch from the public folder (which will be /quantmind_analytics/data/seed.json on GH Pages)
-        const response = await fetch('./data/seed.json');
-        if (!response.ok) throw new Error('Seed file not found');
-        
-        const data = await response.json();
-        const symbols = Object.keys(data);
-        
-        onProgress(`Importing ${symbols.length} stocks...`);
-        for (const symbol of symbols) {
-            await saveStockData(symbol, data[symbol]);
+        let fileIndex = 1;
+        let totalImported = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+            onProgress(`Downloading part ${fileIndex}...`);
+            const response = await fetch(`./data/seed_${fileIndex}.json`);
+            
+            if (!response.ok) {
+                hasMore = false;
+                break;
+            }
+            
+            const data = await response.json();
+            const symbols = Object.keys(data);
+            
+            if (symbols.length === 0) {
+                hasMore = false;
+                break;
+            }
+
+            onProgress(`Importing part ${fileIndex} (${symbols.length} stocks)...`);
+            for (const symbol of symbols) {
+                await saveStockData(symbol, data[symbol]);
+            }
+            
+            totalImported += symbols.length;
+            fileIndex++;
         }
-        return true;
+
+        return totalImported > 0;
     } catch (e) {
-        console.warn("Bootstrap failed (this is normal if you haven't pushed data yet):", e);
+        console.warn("Bootstrap finished or interrupted:", e);
         return false;
     }
 };

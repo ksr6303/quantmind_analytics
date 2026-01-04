@@ -1,3 +1,5 @@
+import CUSTOM_PERMANENT_STOCKS from './custom_stocks.json';
+
 export const INDIAN_STOCKS = [
   // --- NIFTY 50 ---
   { symbol: 'RELIANCE.NS', name: 'Reliance Industries', sector: 'Energy', category: 'NIFTY 50' },
@@ -490,8 +492,9 @@ export const addUserStockToStorage = (stock: any) => {
 
 export const getStocks = (market: 'IND' | 'US') => {
   const base = market === 'IND' ? INDIAN_STOCKS : US_STOCKS;
-  const custom = getUserStocks(market);
-  return [...custom, ...base];
+  const permanentCustom = (CUSTOM_PERMANENT_STOCKS as any[]).filter(s => s.market === market);
+  const browserCustom = getUserStocks(market);
+  return [...browserCustom, ...permanentCustom, ...base];
 };
 
 export const STOCK_UNIVERSE = INDIAN_STOCKS;

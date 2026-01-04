@@ -3,94 +3,170 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const OUTPUT_FILE = path.join(__dirname, '../public/data/seed.json');
+const DATA_DIR = path.join(__dirname, '../public/data');
 const STOCKS_FILE = path.join(__dirname, '../src/constants/stocks.ts');
 
 const BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart/";
-const PROXIES = ["https://corsproxy.io/?", "https://api.allorigins.win/raw?url="];
+const PROXIES = [
+    "https://corsproxy.io/?",
+    "https://api.allorigins.win/raw?url="
+];
 
+const BATCH_SIZE = 5; 
+const STOCKS_PER_FILE = 100; 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function fetchWithRetry(symbol) {
-    const url = `${BASE_URL}${symbol}?interval=1d&range=10y`;
+async function fetchWithProxy(url, proxy) {
     const encodedUrl = encodeURIComponent(url);
-    
-    for (const proxy of PROXIES) {
-        try {
-            const response = await fetch(`${proxy}${encodedUrl}`);
-            if (!response.ok) continue;
-            const data = await response.json();
-            const result = data.chart.result?.[0];
-            if (!result) continue;
+    const target = `${proxy}${encodedUrl}`;
+    const headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/json"
+    };
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 10000);
+    try {
+        const response = await fetch(target, { headers, signal: controller.signal });
+        clearTimeout(id);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } catch (e) {
+        clearTimeout(id);
+        throw e;
+    }
+}
 
-            const timestamps = result.timestamp || [];
-            const quotes = result.indicators.quote[0];
-            
-            return timestamps.map((ts, i) => {
-                if (quotes.close[i] === null) return null;
-                return {
-                    date: new Date(ts * 1000).toISOString().split('T')[0],
-                    price: quotes.close[i],
-                    open: quotes.open[i],
-                    high: quotes.high[i],
-                    low: quotes.low[i],
-                    volume: quotes.volume[i],
-                };
-            }).filter(item => item !== null);
-        } catch (e) {
-            continue;
+async function fetchHistory(symbol, lastDate = null) {
+    let url = `${BASE_URL}${symbol}?interval=1d`;
+    if (lastDate) {
+        const p1 = Math.floor(new Date(lastDate).getTime() / 1000) + 86400; 
+        const p2 = Math.floor(Date.now() / 1000);
+        if (p1 >= p2 - 3600) return []; 
+        url += `&period1=${p1}&period2=${p2}`;
+    } else {
+        url += `&range=10y`;
+    }
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const currentProxies = [...PROXIES].sort(() => Math.random() - 0.5);
+        for (const proxy of currentProxies) {
+            try {
+                const data = await fetchWithProxy(url, proxy);
+                const result = data.chart?.result?.[0];
+                if (!result || !result.timestamp) return [];
+                const timestamps = result.timestamp;
+                const quotes = result.indicators.quote[0];
+                return timestamps.map((ts, i) => {
+                    if (quotes.close[i] === null) return null;
+                    return {
+                        date: new Date(ts * 1000).toISOString().split('T')[0],
+                        price: quotes.close[i],
+                        open: quotes.open[i],
+                        high: quotes.high[i],
+                        low: quotes.low[i],
+                        volume: quotes.volume[i],
+                    };
+                }).filter(item => item !== null);
+            } catch (e) {}
         }
+        await wait(1000 * (attempt + 1));
     }
     return null;
 }
 
 function extractSymbols() {
     const content = fs.readFileSync(STOCKS_FILE, 'utf8');
-    // Regex to find symbols like { symbol: 'AAPL', ... }
     const regex = /symbol:\s*['"]([^'"]+)['"]/g;
     const symbols = [];
     let match;
     while ((match = regex.exec(content)) !== null) {
         symbols.push(match[1]);
     }
-    return [...new Set(symbols)]; // Remove duplicates
+
+    // Also load from custom_stocks.json
+    const customPath = path.join(__dirname, '../src/constants/custom_stocks.json');
+    if (fs.existsSync(customPath)) {
+        try {
+            const customData = JSON.parse(fs.readFileSync(customPath, 'utf8'));
+            customData.forEach(s => symbols.push(s.symbol));
+        } catch (e) {
+            console.warn("Could not read custom_stocks.json");
+        }
+    }
+
+    return [...new Set(symbols)];
+}
+
+function loadAllExistingData() {
+    let combined = {};
+    if (!fs.existsSync(DATA_DIR)) return combined;
+    const files = fs.readdirSync(DATA_DIR).filter(f => f.startsWith('seed_') && f.endsWith('.json'));
+    for (const file of files) {
+        try {
+            const data = JSON.parse(fs.readFileSync(path.join(DATA_DIR, file), 'utf8'));
+            Object.assign(combined, data);
+        } catch (e) {}
+    }
+    return combined;
 }
 
 async function main() {
-    console.log("🚀 Starting Standalone Seed Data Generation...");
-    
+    console.log("🚀 Starting Multi-File Seed Generation...");
     const symbols = extractSymbols();
-    console.log(`Found ${symbols.length} symbols in stocks.ts`);
+    const existingData = loadAllExistingData();
+    const finalDatabase = { ...existingData };
     
-    const database = {};
-    let count = 0;
+    let totalNewPoints = 0;
+    let failedCount = 0;
 
-    for (const symbol of symbols) {
-        count++;
-        process.stdout.write(`[${count}/${symbols.length}] Fetching ${symbol.padEnd(12)}... `);
-        
-        const history = await fetchWithRetry(symbol);
-        if (history) {
-            database[symbol] = history;
-            console.log("✅ OK");
-        } else {
-            console.log("❌ FAILED");
+    for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+        const batch = symbols.slice(i, i + BATCH_SIZE);
+        process.stdout.write(`[${i + batch.length}/${symbols.length}] Syncing ${batch.length} stocks... `);
+
+        const results = await Promise.all(batch.map(async (symbol) => {
+            const history = existingData[symbol] || [];
+            const lastDate = history.length > 0 ? history[history.length - 1].date : null;
+            const newData = await fetchHistory(symbol, lastDate);
+            return { symbol, newData, existingHistory: history };
+        }));
+
+        let batchNew = 0;
+        for (const { symbol, newData, existingHistory } of results) {
+            if (newData === null) { failedCount++; continue; }
+            if (newData.length > 0) {
+                const dateMap = new Map();
+                existingHistory.forEach(p => dateMap.set(p.date, p));
+                newData.forEach(p => dateMap.set(p.date, p));
+                finalDatabase[symbol] = Array.from(dateMap.values()).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                batchNew += newData.length;
+                totalNewPoints += newData.length;
+            }
         }
-        
-        // Anti-throttle delay
-        await wait(200);
+        process.stdout.write(`Done (+${batchNew})\n`);
+        await wait(1000);
     }
 
-    // Ensure directory exists
-    const dir = path.dirname(OUTPUT_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    // --- Splitting Logic ---
+    console.log("\n📦 Splitting into multiple files...");
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-    fs.writeFileSync(OUTPUT_FILE, JSON.stringify(database));
-    console.log(`\n✅ Success! Seed data for ${Object.keys(database).length} stocks saved to ${OUTPUT_FILE}`);
-    console.log("Next steps:");
-    console.log("1. git add .");
-    console.log("2. git commit -m 'Update seed data'");
-    console.log("3. npm run deploy");
+    // Clean old files first
+    fs.readdirSync(DATA_DIR).filter(f => f.startsWith('seed_')).forEach(f => fs.unlinkSync(path.join(DATA_DIR, f)));
+
+    const allSymbols = Object.keys(finalDatabase).sort();
+    let fileIndex = 1;
+    for (let i = 0; i < allSymbols.length; i += STOCKS_PER_FILE) {
+        const slice = allSymbols.slice(i, i + STOCKS_PER_FILE);
+        const chunk = {};
+        slice.forEach(sym => chunk[sym] = finalDatabase[sym]);
+        
+        const fileName = `seed_${fileIndex}.json`;
+        fs.writeFileSync(path.join(DATA_DIR, fileName), JSON.stringify(chunk));
+        console.log(`   ✅ Saved ${fileName} (${slice.length} stocks)`);
+        fileIndex++;
+    }
+
+    console.log(`\n✅ Success! Total Stocks: ${allSymbols.length}, Files: ${fileIndex - 1}`);
 }
 
 main().catch(console.error);

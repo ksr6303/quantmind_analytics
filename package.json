@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:data": "node scripts/update-seed-data.js",
+    "add:stock": "node scripts/add-stock.js",
     "preview": "vite preview",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"
