@@ -7,32 +7,40 @@ const DATA_DIR = path.join(__dirname, '../public/data');
 const STOCKS_FILE = path.join(__dirname, '../src/constants/stocks.ts');
 
 const BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart/";
-const PROXIES = [
-    "https://corsproxy.io/?",
-    "https://api.allorigins.win/raw?url="
-];
 
-const BATCH_SIZE = 5; 
+// REMOVED PROXIES - Fetching Directly from Node.js
+const BATCH_SIZE = 20; // Increased concurrency for direct fetching
 const STOCKS_PER_FILE = 100; 
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function fetchWithProxy(url, proxy) {
-    const encodedUrl = encodeURIComponent(url);
-    const target = `${proxy}${encodedUrl}`;
+async function fetchDirect(url) {
     const headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
         "Accept": "application/json"
     };
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), 10000);
-    try {
-        const response = await fetch(target, { headers, signal: controller.signal });
-        clearTimeout(id);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.json();
-    } catch (e) {
-        clearTimeout(id);
-        throw e;
+    
+    // Simple retry logic
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 10000);
+            
+            const response = await fetch(url, { headers, signal: controller.signal });
+            clearTimeout(id);
+            
+            if (!response.ok) {
+                if (response.status === 404) return null; // Stock not found
+                if (response.status === 429) {
+                    await wait(2000 * (attempt + 1)); // Rate limit backoff
+                    throw new Error("Rate Limited");
+                }
+                throw new Error(`HTTP ${response.status}`);
+            }
+            return await response.json();
+        } catch (e) {
+            if (attempt === 2) throw e;
+            await wait(1000);
+        }
     }
 }
 
@@ -47,31 +55,31 @@ async function fetchHistory(symbol, lastDate = null) {
         url += `&range=10y`;
     }
 
-    for (let attempt = 0; attempt < 3; attempt++) {
-        const currentProxies = [...PROXIES].sort(() => Math.random() - 0.5);
-        for (const proxy of currentProxies) {
-            try {
-                const data = await fetchWithProxy(url, proxy);
-                const result = data.chart?.result?.[0];
-                if (!result || !result.timestamp) return [];
-                const timestamps = result.timestamp;
-                const quotes = result.indicators.quote[0];
-                return timestamps.map((ts, i) => {
-                    if (quotes.close[i] === null) return null;
-                    return {
-                        date: new Date(ts * 1000).toISOString().split('T')[0],
-                        price: quotes.close[i],
-                        open: quotes.open[i],
-                        high: quotes.high[i],
-                        low: quotes.low[i],
-                        volume: quotes.volume[i],
-                    };
-                }).filter(item => item !== null);
-            } catch (e) {}
-        }
-        await wait(1000 * (attempt + 1));
+    try {
+        const data = await fetchDirect(url);
+        if (!data) return null;
+        
+        const result = data.chart?.result?.[0];
+        if (!result || !result.timestamp) return [];
+        
+        const timestamps = result.timestamp;
+        const quotes = result.indicators.quote[0];
+        
+        return timestamps.map((ts, i) => {
+            if (quotes.close[i] === null) return null;
+            return {
+                date: new Date(ts * 1000).toISOString().split('T')[0],
+                price: quotes.close[i],
+                open: quotes.open[i],
+                high: quotes.high[i],
+                low: quotes.low[i],
+                volume: quotes.volume[i],
+            };
+        }).filter(item => item !== null);
+    } catch (e) {
+        // console.warn(`Failed to fetch ${symbol}: ${e.message}`);
+        return null;
     }
-    return null;
 }
 
 function extractSymbols() {

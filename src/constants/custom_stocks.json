@@ -1,1 +1,23 @@
-[]
+[
+  {
+    "symbol": "ZOMATO.NS",
+    "name": "Zomato Ltd",
+    "sector": "Technology",
+    "market": "IND",
+    "category": "Custom"
+  },
+  {
+    "symbol": "COIN",
+    "name": "Coinbase Global",
+    "sector": "Financial",
+    "market": "US",
+    "category": "Custom"
+  },
+  {
+    "symbol": "SMCI",
+    "name": "Super micro Computers Inc",
+    "sector": "Technology",
+    "market": "US",
+    "category": "Custom"
+  }
+]

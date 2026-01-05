@@ -185,8 +185,12 @@ export const updateAllStocks = async (
      if (history.length === 0) {
         pendingUpdates.push({ symbol: stock.symbol, history: [] });
      } else {
-        const lastDate = new Date(history[history.length - 1].date);
+        const lastPoint = history[history.length - 1];
+        const lastDate = new Date(lastPoint.date);
         lastDate.setHours(0,0,0,0);
+        
+        // Simple logic: If last date is older than today midnight, update it.
+        // This covers weekends (Friday data < Saturday midnight)
         if (lastDate.getTime() < todayMidnight.getTime()) {
            pendingUpdates.push({ symbol: stock.symbol, history });
         } else {
@@ -196,27 +200,35 @@ export const updateAllStocks = async (
      }
   });
 
-  const BATCH_SIZE = 8;
-  for (let i = 0; i < pendingUpdates.length; i += BATCH_SIZE) {
-    if (signal?.aborted) break;
+  // OPTIMIZED: Sliding Window / Concurrency Pool
+  // Instead of waiting for a batch of 20 to ALL finish, we keep 12 requests active at all times.
+  const CONCURRENCY_LIMIT = 12;
+  const queue = [...pendingUpdates];
+  
+  const worker = async () => {
+      while (queue.length > 0) {
+          if (signal?.aborted) return;
+          const item = queue.shift();
+          if (!item) break;
 
-    const batch = pendingUpdates.slice(i, i + BATCH_SIZE);
-    
-    const promises = batch.map(item => {
-      const report = (status: string) => {
-         onProgress(processedCount, total, item.symbol, status);
-      };
-      
-      return fetchAndUpdateStock({ symbol: item.symbol }, item.history, report, signal).then(success => {
-        if (success) successCount++; else if (!signal?.aborted) failCount++;
-        processedCount++;
-      });
-    });
+          onProgress(processedCount, total, item.symbol, "Syncing...");
+          
+          try {
+              const success = await fetchAndUpdateStock({ symbol: item.symbol }, item.history, () => {}, signal);
+              if (success) successCount++; 
+              else if (!signal?.aborted) failCount++;
+          } catch (e) {
+              if (!signal?.aborted) failCount++;
+          }
+          
+          processedCount++;
+          // Small yield to keep UI responsive
+          await new Promise(r => setTimeout(r, 10));
+      }
+  };
 
-    await Promise.all(promises);
-    if (signal?.aborted) break;
-    await new Promise(r => setTimeout(r, 200)); 
-  }
+  const workers = Array(Math.min(CONCURRENCY_LIMIT, queue.length)).fill(null).map(() => worker());
+  await Promise.all(workers);
   
   if (signal?.aborted) {
      onProgress(total, total, 'Stopped', `Partial: ${successCount} OK`);
@@ -246,31 +258,35 @@ export const forceReloadStocks = async (
       allData.forEach(d => dataMap.set(d.symbol, d.history));
   }
 
-  const BATCH_SIZE = 5; // Smaller batch for forced operations to be safe
+  // OPTIMIZED: Sliding Window / Concurrency Pool for Force Reload
+  const CONCURRENCY_LIMIT = 12;
+  const queue = [...symbols];
   
-  for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
-    if (signal?.aborted) break;
+  const worker = async () => {
+      while (queue.length > 0) {
+          if (signal?.aborted) return;
+          const symbol = queue.shift();
+          if (!symbol) break;
 
-    const batch = symbols.slice(i, i + BATCH_SIZE);
-    const promises = batch.map(symbol => {
-      const report = (status: string) => {
-         onProgress(processedCount, total, symbol, status);
-      };
-      
-      // If fullReload is true, pass [] as history to force 10y fetch
-      // If fullReload is false, pass existing history (or [] if none) to sync
-      const history = fullReload ? [] : (dataMap.get(symbol) || []);
-      
-      return fetchAndUpdateStock({ symbol }, history, report, signal).then(success => {
-        if (success) successCount++; else if (!signal?.aborted) failCount++;
-        processedCount++;
-      });
-    });
+          onProgress(processedCount, total, symbol, fullReload ? "Overwriting..." : "Syncing...");
+          
+          try {
+              const history = fullReload ? [] : (dataMap.get(symbol) || []);
+              const success = await fetchAndUpdateStock({ symbol }, history, () => {}, signal);
+              if (success) successCount++; 
+              else if (!signal?.aborted) failCount++;
+          } catch (e) {
+              if (!signal?.aborted) failCount++;
+          }
+          
+          processedCount++;
+          // Tiny yield
+          await new Promise(r => setTimeout(r, 10));
+      }
+  };
 
-    await Promise.all(promises);
-    if (signal?.aborted) break;
-    await new Promise(r => setTimeout(r, 200)); 
-  }
+  const workers = Array(Math.min(CONCURRENCY_LIMIT, queue.length)).fill(null).map(() => worker());
+  await Promise.all(workers);
   
   return { successCount, failCount };
 };
