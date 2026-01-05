@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, '../public/data');
+const REPORT_FILE = path.join(DATA_DIR, 'fetch_report.csv');
 const STOCKS_FILE = path.join(__dirname, '../src/constants/stocks.ts');
 
 const BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart/";
@@ -84,11 +85,11 @@ async function fetchHistory(symbol, lastDate = null) {
 
 function extractSymbols() {
     const content = fs.readFileSync(STOCKS_FILE, 'utf8');
-    const regex = /symbol:\s*['"]([^'"]+)['"]/g;
+    const regex = /symbol:\s*['"]([^'"']+)['"]/g;
     const symbols = [];
     let match;
     while ((match = regex.exec(content)) !== null) {
-        symbols.push(match[1]);
+        symbols.push(match[1].toUpperCase());
     }
 
     // Also load from custom_stocks.json
@@ -96,7 +97,7 @@ function extractSymbols() {
     if (fs.existsSync(customPath)) {
         try {
             const customData = JSON.parse(fs.readFileSync(customPath, 'utf8'));
-            customData.forEach(s => symbols.push(s.symbol));
+            customData.forEach(s => symbols.push(s.symbol.toUpperCase()));
         } catch (e) {
             console.warn("Could not read custom_stocks.json");
         }
@@ -126,6 +127,7 @@ async function main() {
     
     let totalNewPoints = 0;
     let failedCount = 0;
+    const reportList = []; // Array to store report data
 
     for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
         const batch = symbols.slice(i, i + BATCH_SIZE);
@@ -140,26 +142,53 @@ async function main() {
 
         let batchNew = 0;
         for (const { symbol, newData, existingHistory } of results) {
-            if (newData === null) { failedCount++; continue; }
-            if (newData.length > 0) {
-                const dateMap = new Map();
-                existingHistory.forEach(p => dateMap.set(p.date, p));
-                newData.forEach(p => dateMap.set(p.date, p));
-                finalDatabase[symbol] = Array.from(dateMap.values()).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                batchNew += newData.length;
-                totalNewPoints += newData.length;
+            let status = 'FAIL';
+            let lastDate = 'N/A';
+
+            if (newData === null) { 
+                failedCount++; 
+                // Keep existing data date if available, even if update failed
+                if (existingHistory.length > 0) {
+                    lastDate = existingHistory[existingHistory.length - 1].date;
+                }
+            } else {
+                status = 'PASS';
+                if (newData.length > 0) {
+                    const dateMap = new Map();
+                    existingHistory.forEach(p => dateMap.set(p.date, p));
+                    newData.forEach(p => dateMap.set(p.date, p));
+                    finalDatabase[symbol] = Array.from(dateMap.values()).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                    batchNew += newData.length;
+                    totalNewPoints += newData.length;
+                }
+                
+                // Determine latest date
+                if (finalDatabase[symbol] && finalDatabase[symbol].length > 0) {
+                    lastDate = finalDatabase[symbol][finalDatabase[symbol].length - 1].date;
+                } else if (existingHistory.length > 0) {
+                    lastDate = existingHistory[existingHistory.length - 1].date;
+                }
             }
+
+            reportList.push({ symbol, date: lastDate, status });
         }
         process.stdout.write(`Done (+${batchNew})\n`);
         await wait(1000);
     }
+
+    // --- CSV Generation ---
+    console.log("\n📝 Generating Report...");
+    const csvHeader = "Symbol,Last Data Point,Status\n";
+    const csvRows = reportList.map(r => `${r.symbol},${r.date},${r.status}`).join('\n');
+    fs.writeFileSync(REPORT_FILE, csvHeader + csvRows);
+    console.log(`   ✅ Saved report to ${REPORT_FILE}`);
 
     // --- Splitting Logic ---
     console.log("\n📦 Splitting into multiple files...");
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
     // Clean old files first
-    fs.readdirSync(DATA_DIR).filter(f => f.startsWith('seed_')).forEach(f => fs.unlinkSync(path.join(DATA_DIR, f)));
+    fs.readdirSync(DATA_DIR).filter(f => f.startsWith('seed_') && f.endsWith('.json')).forEach(f => fs.unlinkSync(path.join(DATA_DIR, f)));
 
     const allSymbols = Object.keys(finalDatabase).sort();
     let fileIndex = 1;

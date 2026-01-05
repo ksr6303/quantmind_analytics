@@ -492,8 +492,16 @@ export const addUserStockToStorage = (stock: any) => {
 
 export const getStocks = (market: 'IND' | 'US') => {
   const base = market === 'IND' ? INDIAN_STOCKS : US_STOCKS;
-  const permanentCustom = (CUSTOM_PERMANENT_STOCKS as any[]).filter(s => s.market === market);
-  const browserCustom = getUserStocks(market);
+  
+  // Filter out custom stocks that already exist in the base list
+  const permanentCustom = (CUSTOM_PERMANENT_STOCKS as any[]).filter(s => 
+    s.market === market && !base.some(b => b.symbol === s.symbol)
+  );
+  
+  const browserCustom = getUserStocks(market).filter((s: any) => 
+    !base.some(b => b.symbol === s.symbol) && !permanentCustom.some(p => p.symbol === s.symbol)
+  );
+
   return [...browserCustom, ...permanentCustom, ...base];
 };
 
